@@ -11,14 +11,18 @@ import "package:flutter_bluetooth_serial/flutter_bluetooth_serial.dart";
 
 // Config
 String BEANBOT_BT_NAME = "test";
-List<String> STATUSES = [
-  "Idle - Ready For Operation",
-  "Processing - Order Being Processed"
-];
+List<String> STATUSES = ["Idle - Ready For Operation", "Order Being Processed"];
 
 void main() {
   print('start');
-  runApp(BluetoothApp());
+  runApp(MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: "BeanBot Bluetooth Control",
+      theme: ThemeData(
+        primaryColor: COLOR_WHITE,
+        accentColor: COLOR_DARK_BLUE,
+      ),
+      home: BluetoothApp()));
 }
 
 class BluetoothApp extends StatefulWidget {
@@ -29,6 +33,11 @@ class BluetoothApp extends StatefulWidget {
 class _BluetoothAppState extends State<BluetoothApp> {
   String deviceName = "loading...";
   String deviceStatus = "loading...";
+  bool order_complete = false;
+
+  List<int> commandBuffer = [];
+  List<int> real_weights = [0, 0, 0];
+  List<int> desired_weights = [0, 0, 0];
 
   BluetoothState _bluetoothState = BluetoothState.UNKNOWN;
   final FlutterBluetoothSerial _bluetooth = FlutterBluetoothSerial.instance;
@@ -83,8 +92,6 @@ class _BluetoothAppState extends State<BluetoothApp> {
     }
   }
 
-  List<int> commandBuffer = [];
-
   void _onDataReceived(Uint8List data) {
     // Allocate buffer for parsed data
     int backspacesCounter = 0;
@@ -114,7 +121,7 @@ class _BluetoothAppState extends State<BluetoothApp> {
     commandBuffer = commandBuffer + buffer;
 
     String dataString = String.fromCharCodes(commandBuffer);
-    print(dataString);
+    // print(dataString);
     // Check for command
     List<String> commandArray = dataString.split(" ");
 
@@ -122,6 +129,8 @@ class _BluetoothAppState extends State<BluetoothApp> {
       if (commandArray[i].startsWith("\$\{") & commandArray[i].endsWith("\}")) {
         List<String> command =
             commandArray[i].substring(2, commandArray[i].length - 1).split(":");
+
+        print(command);
 
         switch (command[0]) {
           case "#data":
@@ -141,6 +150,20 @@ class _BluetoothAppState extends State<BluetoothApp> {
                     deviceStatus = STATUSES[int.parse(value)];
                   });
                   break;
+                case "weight":
+                  int siloNumber = int.parse(command[2]);
+                  setState(() {
+                    real_weights[siloNumber - 1] = int.parse(command[3]);
+                  });
+
+                  print(real_weights);
+
+                  if (siloNumber == 1) {
+                    setState(() {
+                      order_complete = true;
+                    });
+                  }
+                  break;
               }
             }
         }
@@ -151,6 +174,22 @@ class _BluetoothAppState extends State<BluetoothApp> {
         commandBuffer = e.codeUnits;
       }
     }
+  }
+
+  void close_popup() {
+    print("close popup");
+    setState(() {
+      real_weights = [0, 0, 0];
+      order_complete = false;
+    });
+  }
+
+  void order_create(List<int> weights) {
+    setState(() {
+      desired_weights = weights;
+    });
+    connection.output.add(
+        ascii.encode("order_create:${weights[0]}:${weights[1]}:${weights[2]}"));
   }
 
   Future<void> enableBluetooth() async {
@@ -220,19 +259,44 @@ class _BluetoothAppState extends State<BluetoothApp> {
   @override
   Widget build(BuildContext context) {
     double screenWidth = window.physicalSize.width;
-    return MaterialApp(
-        debugShowCheckedModeBanner: false,
-        title: "BeanBot Bluetooth Control",
-        theme: ThemeData(
-            primaryColor: COLOR_WHITE,
-            accentColor: COLOR_DARK_BLUE,
-            textTheme:
-                screenWidth < 500 ? TEXT_THEME_SMALL : TEXT_THEME_DEFAULT),
-        home: MainScreen(
-          isConnected: isConnected,
-          deviceName: deviceName,
-          deviceStatus: deviceStatus,
-          connection: isConnected ? connection : null,
-        ));
+
+    return MainScreen(
+      isConnected: isConnected,
+      deviceName: deviceName,
+      deviceStatus: deviceStatus,
+      connection: isConnected ? connection : null,
+      order_complete: order_complete,
+      real_weights: real_weights,
+      desired_weights: desired_weights,
+      order_create: order_create,
+      close_popup: close_popup,
+    );
   }
+}
+
+Widget _buildPopupDialog(BuildContext context, List<int> real_weights,
+    List<int> desired_weights, List<int> afwijkingen) {
+  return AlertDialog(
+    title: const Text('Bestelling is klaar'),
+    content: Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(
+            "Gewicht Type 1: ${real_weights[0]}g (${desired_weights[0]} | ${afwijkingen[0]}%)"),
+        Text(
+            "Gewicht Type 2: ${real_weights[1]}g (${desired_weights[1]} | ${afwijkingen[1]}%)"),
+        Text(
+            "Gewicht Type 3: ${real_weights[2]}g (${desired_weights[2]} | ${afwijkingen[2]}%)"),
+      ],
+    ),
+    actions: <Widget>[
+      ElevatedButton(
+        onPressed: () {
+          Navigator.of(context).pop();
+        },
+        child: Text('Close'),
+      ),
+    ],
+  );
 }

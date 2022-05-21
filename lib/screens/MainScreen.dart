@@ -1,9 +1,9 @@
-import 'dart:convert';
 import 'dart:ui';
 
 import 'package:beanbot_app/utils/widget_functions.dart';
 import "package:flutter/material.dart";
 import 'package:flutter_bluetooth_serial/flutter_bluetooth_serial.dart';
+import 'package:charts_flutter/flutter.dart' as charts;
 
 // Functional Config
 const int STEP_SIZE = 10;
@@ -14,17 +14,30 @@ const Color COLOR_DARK_GREEN = Color.fromRGBO(47, 140, 86, 1);
 const Color COLOR_PURPLE = Color.fromRGBO(124, 79, 252, 1);
 const double padding = 20.0;
 
+String slagzin = "Supported By Tom Boonen";
+
 class MainScreen extends StatefulWidget {
   final String deviceName;
   String deviceStatus;
+  bool order_complete;
   final bool isConnected;
   BluetoothConnection? connection;
+  Function order_create;
+  List<int> real_weights;
+  List<int> desired_weights;
+  Function close_popup;
+
   MainScreen(
       {Key? key,
       required this.deviceName,
       required this.deviceStatus,
       required this.isConnected,
-      required this.connection})
+      required this.connection,
+      required this.order_create,
+      required this.order_complete,
+      required this.real_weights,
+      required this.desired_weights,
+      required this.close_popup})
       : super(key: key);
 
   @override
@@ -66,7 +79,7 @@ class _MainScreenState extends State<MainScreen> {
       body: Padding(
         padding: const EdgeInsets.symmetric(horizontal: padding),
         child: Column(children: <Widget>[
-          if (widget.isConnected) ...[
+          if (widget.isConnected && !widget.order_complete) ...[
             MainMenu(),
             ConnectedDeviceStatus(
               deviceName: widget.deviceName,
@@ -76,7 +89,7 @@ class _MainScreenState extends State<MainScreen> {
             const Align(
               alignment: Alignment.centerLeft,
               child: Text(
-                "Create order",
+                "Create order (g)",
                 style: TextStyle(
                     fontSize: 28,
                     fontWeight: FontWeight.w900,
@@ -114,23 +127,182 @@ class _MainScreenState extends State<MainScreen> {
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
               ),
               onPressed: () {
-                widget.connection?.output.add(ascii.encode(
-                    "place_order:${weights[0]}:${weights[1]}:${weights[2]}"));
+                widget.order_create(weights);
                 setState(() {
                   weights = [0, 0, 0];
                 });
               },
             )
           ],
+          if (widget.isConnected && widget.order_complete) ...[
+            addVerticalSpace(padding * 2),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  "Order Complete",
+                  style: TextStyle(
+                      fontSize: 28,
+                      fontWeight: FontWeight.w900,
+                      color: COLOR_DARK_GREEN),
+                ),
+                GestureDetector(
+                  child: Icon(Icons.close),
+                  onTap: () => widget.close_popup(),
+                )
+              ],
+            ),
+            addVerticalSpace(padding),
+            OrderCompleteCard(
+              desired_weights: widget.desired_weights,
+              real_weights: widget.real_weights,
+            )
+          ],
           if (!widget.isConnected) ...[
             MainMenu(),
-            Align(
+            const Align(
                 alignment: Alignment.centerLeft,
-                child: Text("Connecting to the beanbot..."))
+                child: Text(
+                  "Connecting to the beanbot...",
+                  style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.black,
+                      fontWeight: FontWeight.w300),
+                ))
           ]
         ]),
       ),
     ));
+  }
+}
+
+class OrderSeries {
+  final int silo;
+  final int weight;
+
+  OrderSeries({
+    required this.silo,
+    required this.weight,
+  });
+}
+
+class OrderCompleteCard extends StatelessWidget {
+  List<int> real_weights;
+  List<int> desired_weights;
+
+  OrderCompleteCard(
+      {Key? key, required this.real_weights, required this.desired_weights})
+      : super(key: key);
+
+  // List<int> real_weights = [123, 164, 432];
+  // List<int> desired_weights = [125, 160, 420];
+
+  @override
+  Widget build(BuildContext context) {
+    List<charts.Series<OrderSeries, String>> series = [
+      charts.Series<OrderSeries, String>(
+          id: "Desired",
+          domainFn: (OrderSeries data, _) => "Type ${data.silo}",
+          measureFn: (OrderSeries data, _) => data.weight,
+          colorFn: (OrderSeries data, _) =>
+              charts.ColorUtil.fromDartColor(COLOR_LIGHT_GREEN),
+          data: List<OrderSeries>.generate(
+              desired_weights.length,
+              (int index) => OrderSeries(
+                  silo: index + 1, weight: desired_weights[index]))),
+      charts.Series<OrderSeries, String>(
+          id: "Real",
+          domainFn: (OrderSeries data, _) => "Type ${data.silo}",
+          measureFn: (OrderSeries data, _) => data.weight,
+          colorFn: (OrderSeries data, _) =>
+              charts.ColorUtil.fromDartColor(COLOR_PURPLE),
+          data: List<OrderSeries>.generate(
+              desired_weights.length,
+              (int index) =>
+                  OrderSeries(silo: index + 1, weight: real_weights[index]))),
+    ];
+
+    return Column(
+      children: [
+        SizedBox(
+          height: 200,
+          child: charts.BarChart(series,
+              animate: true,
+              barGroupingType: charts.BarGroupingType.grouped,
+              behaviors: [new charts.SeriesLegend()]),
+        ),
+        ...List.generate(
+          desired_weights.length,
+          (index) => Column(
+            children: [
+              addVerticalSpace(padding),
+              Container(
+                  padding: const EdgeInsets.all(padding),
+                  width: double.infinity,
+                  decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(10),
+                      boxShadow: [
+                        BoxShadow(
+                            color: Colors.black.withOpacity(0.05),
+                            spreadRadius: 0,
+                            blurRadius: 10,
+                            offset: const Offset(1, 1))
+                      ]),
+                  child: Column(
+                    children: [
+                      Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            "Type ${index + 1}",
+                            style: const TextStyle(
+                                fontWeight: FontWeight.w900, fontSize: 16),
+                          )),
+                      addVerticalSpace(padding / 2),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Row(
+                              mainAxisAlignment: MainAxisAlignment.start,
+                              children: [
+                                Text(
+                                  "${desired_weights[index]}g",
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w900,
+                                      color: COLOR_LIGHT_GREEN,
+                                      fontSize: 28),
+                                ),
+                                const Text(
+                                  " → ",
+                                  style: TextStyle(
+                                      fontWeight: FontWeight.w900,
+                                      fontSize: 28,
+                                      color: Colors.black26),
+                                ),
+                                Text(
+                                  "${real_weights[index]}g",
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w900,
+                                      color: COLOR_PURPLE,
+                                      fontSize: 28),
+                                ),
+                              ]),
+                          Text(
+                            "${desired_weights[index] == 0 ? 0 : (real_weights[index] / desired_weights[index] * 1000 - 1000).toInt() / 10}%",
+                            style: const TextStyle(
+                                fontWeight: FontWeight.w900,
+                                color: Colors.black26,
+                                fontSize: 16),
+                          ),
+                        ],
+                      )
+                    ],
+                  )),
+            ],
+          ),
+        ),
+      ],
+    );
   }
 }
 
@@ -140,13 +312,13 @@ class MainMenu extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: EdgeInsets.symmetric(vertical: padding),
+      padding: const EdgeInsets.symmetric(vertical: padding),
       child: Align(
           alignment: Alignment.centerLeft,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
-            children: const [
-              Text(
+            children: [
+              const Text(
                 "BeanBot",
                 style: TextStyle(
                     color: COLOR_DARK_GREEN,
@@ -155,8 +327,9 @@ class MainMenu extends StatelessWidget {
                     height: 1),
               ),
               Text(
-                "Supported by Tom Boonen",
-                style: TextStyle(
+                // "Supported by Tom Boonen",
+                slagzin,
+                style: const TextStyle(
                     color: COLOR_LIGHT_GREEN,
                     fontSize: 22,
                     fontWeight: FontWeight.w900,
